@@ -18,11 +18,6 @@ jobs:
       - name: Pull Github Repository
         uses: actions/checkout@v4
 
-      - name: Install Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - name: Setup .env
         run: |
           echo "${{ secrets.DEV_ENV }}" > .env
