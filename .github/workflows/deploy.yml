@@ -3,7 +3,7 @@ name: Deploy To OCI
 on:
   push:
     branches:
-      - feature/#1
+      - develop
 
 jobs:
   Deploy:
