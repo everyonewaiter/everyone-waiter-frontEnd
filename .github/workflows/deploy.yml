@@ -22,6 +22,11 @@ jobs:
         run: |
           echo "${{ secrets.DEV_ENV }}" > .env
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: linux/arm64/v8
+
       - name: Get OCIR Repository
         uses: oracle-actions/get-ocir-repository@v1.3.0
         id: get-ocir-repository
