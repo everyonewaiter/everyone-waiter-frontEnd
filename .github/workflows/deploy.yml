@@ -1,0 +1,81 @@
+name: Deploy To OCI
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  Deploy:
+    runs-on: ubuntu-latest
+    env:
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+      OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+    steps:
+      - name: Pull Github Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .env
+        run: |
+          echo "${{ secrets.DEV_ENV }}" > .env
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: linux/arm64/v8
+
+      - name: Get OCIR Repository
+        uses: oracle-actions/get-ocir-repository@v1.3.0
+        id: get-ocir-repository
+        with:
+          name: frontend-development
+          compartment: ${{ secrets.OCI_COMPARTMENT_OCID }}
+
+      - name: Log into OCIR
+        uses: oracle-actions/login-ocir@v1.3.0
+        id: login-ocir
+        with:
+          auth_token: ${{ secrets.OCI_AUTH_TOKEN }}
+
+      - name: Push container image
+        run: |
+          docker build --platform linux/arm64/v8 -t everyonewaiter-frontend:${{ github.sha }} .
+          docker tag everyonewaiter-frontend:${{ github.sha }} ${{ steps.get-ocir-repository.outputs.repo_path }}:${{ github.sha }}
+          docker push ${{ steps.get-ocir-repository.outputs.repo_path }}:${{ github.sha }}
+
+      - name: Create OCI Bastion Session
+        uses: domenikk/oci-bastion-action@v1
+        id: bastion
+        with:
+          oci-user: $OCI_CLI_USER
+          oci-tenancy: $OCI_CLI_TENANCY
+          oci-fingerprint: $OCI_CLI_FINGERPRINT
+          oci-key-content: $OCI_CLI_KEY_CONTENT
+          oci-region: $OCI_CLI_REGION
+          bastion-id: ${{ secrets.OCI_BASTION_OCID }}
+          public-key: ${{ secrets.OCI_INSTANCE_PUBLIC_KEY }}
+          session-type: 'MANAGED_SSH'
+          target-resource-id: ${{ secrets.OCI_INSTANCE_OCID }}
+          target-resource-user: 'opc'
+
+      - name: Connect SSH & Deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: 'opc'
+          key: ${{ secrets.OCI_INSTANCE_PRIVATE_KEY }}
+          port: '22'
+          proxy_host: ${{ secrets.OCI_PROXY_HOST }}
+          proxy_username: ${{ steps.bastion.outputs.session-id }}
+          proxy_key: ${{ secrets.OCI_INSTANCE_PRIVATE_KEY }}
+          proxy_port: '22'
+          script: |
+            echo "${{ secrets.OCI_AUTH_TOKEN }}" | docker login ${{ secrets.OCIR_REGION_KEY }} -u ${{ secrets.OCIR_DOCKER_USERNAME }} --password-stdin
+            sudo docker stop everyonewaiter-frontend || true
+            sudo docker rm everyonewaiter-frontend || true
+            sudo docker image ls --filter=reference="${{ steps.get-ocir-repository.outputs.repo_path }}*" --format "{{.ID}}" | xargs sudo docker rmi || true
+            sudo docker pull ${{ steps.get-ocir-repository.outputs.repo_path }}:${{ github.sha }}
+            sudo docker run -d -p 3000:3000 --name everyonewaiter-frontend --network everyonewaiter-network ${{ steps.get-ocir-repository.outputs.repo_path }}:${{ github.sha }}
